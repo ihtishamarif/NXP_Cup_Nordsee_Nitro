@@ -9,8 +9,10 @@ line_follower:
 
     camera:             # must match the xacro linescan_* args and the real mount
       height: 0.25      # lens above ground, m
-      pitch: 0.56       # tilt down from horizontal, rad (looks ~0.40 m ahead of the lens)
-      hfov: 1.2         # field of view of the lens across the 128 pixels, rad
+      pitch: 0.47       # tilt down from horizontal, rad (line ~0.49 m ahead of the lens)
+      hfov: 0.95        # 7.9 mm lens (Parallax TSL1401-DB): 2*atan(4.06 mm / 7.9 mm)
+                        # = 54 deg; sees ~57 cm across at this mount. Other lens:
+                        # hfov = 2*atan(4.06 / focal_length_mm)
 
     tracker:
       near_row: 0.5     # the one and only row
@@ -25,7 +27,7 @@ line_follower:
     control:
       wheel_base: 0.175
       steering_limit: 0.45
-      kp: 2.0
+      kp: 1.2
       kd: 0.0 
       kf: 0.0           # no far line to feed forward from
       v_max: 1.0
