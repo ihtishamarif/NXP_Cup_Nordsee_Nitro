@@ -5,6 +5,7 @@ line_follower:
   ros__parameters:
     enabled: true
     publish_debug: true
+    stats_period: 5.0   # seconds (sim time) between camera rate / delay log lines
 
     camera:             # must match the camera mounting (xacro args / real car)
       height: 0.25
@@ -23,10 +24,11 @@ line_follower:
     control:
       wheel_base: 0.175
       steering_limit: 0.45
-      kp: 1.2
-      kd: 0.05
+      kp: 0.7
+      kd: 0.08
       kf: 0.9
-      v_max: 1.5        # start slow in Gazebo, raise once it laps cleanly
+      v_max: 1.0        # holds even with a slow camera (15 fps, 0.2 s delay); raise to 1.5+
+                        # once the follower's stats line shows ~30 fps and <0.1 s image age
       v_min: 0.8
       slow_offset: 0.15
       hold_time: 0.6

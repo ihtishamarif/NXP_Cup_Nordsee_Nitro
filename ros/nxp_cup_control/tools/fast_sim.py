@@ -16,6 +16,7 @@ Run generate_track.py in nxp_cup_gazebo first if you changed the layout.
 """
 
 import argparse
+import collections
 import math
 import sys
 from pathlib import Path
@@ -95,12 +96,12 @@ def run(args):
     th += args.yaw_off
     v = delta = 0.0
     cmd_lin = cmd_ang = 0.0      # cmd_vel twist applied (one frame late)
-    pending = (0.0, 0.0)
+    queue = collections.deque()  # (time it reaches the car, linear.x, angular.z)
     steer_cap = math.atan(math.sin(cp.steering_limit))  # plugin: min radius = L / sin(limit)
 
     track = TrackProgress(cl, info["length_m"], CarShape(wheel_base=L, wheel_separation=2 * half_sep))
 
-    dt_phys, frame_dt = 0.002, 1.0 / 30
+    dt_phys, frame_dt = 0.002, 1.0 / args.fps
     t, next_frame = 0.0, 0.0
     max_off, sum_sq, n_samples = 0.0, 0.0, 0
     lap_times = []
@@ -113,11 +114,11 @@ def run(args):
     while t < args.timeout:
         if t >= next_frame:
             next_frame += frame_dt
-            cmd_lin, cmd_ang = pending
             img = cam.render(tex, ext, ppm, (x, y, th), rng)
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             spd, st = follower.step(gray, frame_dt)
-            pending = (spd, follower.yaw_rate())    # what the ROS node publishes
+            # what the ROS node publishes, reaching the car after the camera-to-wheels delay
+            queue.append((t + args.latency, spd, follower.yaw_rate()))
 
             event, lateral = track.update(x, y, th, t)
             max_off = max(max_off, lateral)
@@ -142,6 +143,8 @@ def run(args):
                 pane[:mh] = cv2.resize(mini, (320, mh))
                 writer.write(np.hstack([dbg, pane]))
 
+        while queue and queue[0][0] <= t:
+            _, cmd_lin, cmd_ang = queue.popleft()
         # plant: mirrors gz-sim's AckermannSteering. It rate-limits linear.x first
         # (max_acceleration in the URDF), then derives the turning radius from the
         # *limited* speed: R = v / angular.z. The steering joint follows with
@@ -173,6 +176,9 @@ def main():
     ap.add_argument("--laps", type=int, default=1)
     ap.add_argument("--timeout", type=float, default=120.0, help="rulebook: 120 s per attempt")
     ap.add_argument("--video", help="write an mp4 of camera view + debug overlay")
+    ap.add_argument("--fps", type=float, default=30.0, help="camera frame rate")
+    ap.add_argument("--latency", type=float, default=1 / 30,
+                    help="seconds from camera frame to wheels reacting")
     ap.add_argument("--y-off", type=float, default=0.0, help="start offset to the left, m")
     ap.add_argument("--yaw-off", type=float, default=0.0, help="start heading error, rad")
     ap.add_argument("--hfov", type=float, default=1.6)
