@@ -90,13 +90,18 @@ the simulated camera from the `camera:` section of that same file.
 
 What it needs, from the test bench:
 
-- **Look-ahead about 0.40 m in front of the lens.** Default mount: 25 cm high, tilted
-  0.56 rad (32°), lens field of view 1.2 rad (69°), so the 55 cm track fills about 100 of
-  the 128 pixels with margin either side. Looking closer (steeper tilt) made it fail.
-- **Gains:** kp 2.0, kd 0, no feed-forward. With one line there is no far row, so kp
-  does all the steering work.
-- **Results:** laps at 1.0, 1.5 and 2.0 m/s top speed (17.4 s, 13.1 s, 10.8 s) within
-  4-6 cm of the centre line, also at 50 Hz with extra delay and from a crooked start.
+- **The lens decides the mount.** Ready-made modules come with a lens fitted; the
+  Parallax TSL1401-DB in NXP's application note AN4244 has a 7.9 mm lens, which on the
+  8.1 mm sensor row gives 54° (`hfov = 2*atan(4.06 / focal_mm)`). That is the default.
+  It sees roughly as wide as it is far away, so it must look far enough ahead to see the
+  whole 55 cm track: at 25 cm height the original 40 cm look-ahead sees only 49 cm and
+  never finds both lines.
+- **Default mount for the 7.9 mm lens:** 25 cm high, tilted 0.47 rad (27°), so the line
+  sits ~49 cm ahead of the lens and covers ~57 cm. 30 cm high at 0.55 rad works as well.
+- **Gains:** kp 1.2, kd 0, no feed-forward (one line means no far row).
+- **Results:** laps at 1.0, 1.5 and 2.0 m/s top speed (18.0 s, 13.7 s, 11.4 s) within
+  6-8 cm of the centre line; also at 50 Hz with extra delay and from crooked starts.
+  A wider 6 mm lens (68°) can look closer (~40 cm) with kp 2.0.
 - **Lens vignetting:** cheap lenses darken the image edges. Up to ~40% loss needs nothing;
   beyond that set `tracker.vignette_comp` to the loss you measure (point the camera at
   plain white and compare edge vs centre). A rough value is enough.
