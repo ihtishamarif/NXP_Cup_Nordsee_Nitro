@@ -1,0 +1,255 @@
+<?xml version="1.0"?>
+<!--
+  NXP Cup car for Gazebo Jetty (gz-sim 10).
+
+  Front-steered Ackermann car with one forward camera (primary navigation, as
+  the rulebook requires) and an IMU. Driven by the gz AckermannSteering system,
+  which takes geometry_msgs/Twist on /cmd_vel (linear.x = m/s, angular.z = rad/s).
+
+  All dimensions below are placeholders close to the 2025 3D-printed NXP kit.
+  Measure your real car and update them; the camera numbers matter most,
+  because the line follower is tuned against what the camera sees.
+-->
+<robot name="nxp_cup_car" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ===== Parameters (measure these on the real car) ===== -->
+  <xacro:arg name="camera_height" default="0.25"/>   <!-- lens above ground, m -->
+  <xacro:arg name="camera_x" default="0.10"/>        <!-- lens ahead of rear axle, m -->
+  <xacro:arg name="camera_pitch" default="0.75"/>    <!-- tilt down from horizontal, rad -->
+  <xacro:arg name="camera_hfov" default="1.6"/>      <!-- horizontal field of view, rad -->
+  <xacro:arg name="camera_width" default="320"/>
+  <xacro:arg name="camera_height_px" default="240"/>
+  <xacro:arg name="camera_rate" default="30"/>
+
+  <xacro:property name="wheel_base" value="0.175"/>       <!-- rear axle to front axle -->
+  <xacro:property name="wheel_separation" value="0.150"/> <!-- left to right wheel centre -->
+  <xacro:property name="wheel_radius" value="0.032"/>
+  <xacro:property name="wheel_width" value="0.025"/>
+  <xacro:property name="wheel_mass" value="0.05"/>
+  <xacro:property name="steering_limit" value="0.45"/>    <!-- rad, about 26 deg -->
+
+  <xacro:property name="chassis_length" value="0.26"/>
+  <xacro:property name="chassis_width" value="0.12"/>
+  <xacro:property name="chassis_height" value="0.03"/>
+  <xacro:property name="chassis_mass" value="0.9"/>        <!-- incl. battery and boards -->
+
+  <xacro:property name="max_speed" value="3.0"/>           <!-- m/s -->
+  <xacro:property name="max_accel" value="4.0"/>           <!-- m/s^2 -->
+
+  <xacro:property name="cam_h" value="$(arg camera_height)"/>
+  <xacro:property name="cam_x" value="$(arg camera_x)"/>
+  <xacro:property name="cam_pitch" value="$(arg camera_pitch)"/>
+
+  <!-- ===== Helpers ===== -->
+  <xacro:macro name="box_inertia" params="m x y z">
+    <inertia ixx="${m*(y*y+z*z)/12}" ixy="0" ixz="0"
+             iyy="${m*(x*x+z*z)/12}" iyz="0" izz="${m*(x*x+y*y)/12}"/>
+  </xacro:macro>
+  <xacro:macro name="cyl_inertia" params="m r h">
+    <!-- cylinder with its axis along the link's y axis (wheel spin axis) -->
+    <inertia ixx="${m*(3*r*r+h*h)/12}" ixy="0" ixz="0"
+             iyy="${m*r*r/2}" iyz="0" izz="${m*(3*r*r+h*h)/12}"/>
+  </xacro:macro>
+
+  <material name="black"><color rgba="0.1 0.1 0.1 1"/></material>
+  <material name="blue"><color rgba="0.0 0.45 0.75 1"/></material>
+  <material name="grey"><color rgba="0.5 0.5 0.5 1"/></material>
+
+  <!-- ===== Chassis =====
+       base_link is the root and sits at the rear axle centre, wheel_radius above
+       the ground (standard for Ackermann odometry; Gazebo publishes odom -> base_link). -->
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="${wheel_base/2} 0 ${chassis_height/2}"/>
+      <geometry><box size="${chassis_length} ${chassis_width} ${chassis_height}"/></geometry>
+      <material name="blue"/>
+    </visual>
+    <collision>
+      <origin xyz="${wheel_base/2} 0 ${chassis_height/2}"/>
+      <geometry><box size="${chassis_length} ${chassis_width} ${chassis_height}"/></geometry>
+    </collision>
+    <inertial>
+      <origin xyz="${wheel_base/2} 0 ${chassis_height/2}"/>
+      <mass value="${chassis_mass}"/>
+      <xacro:box_inertia m="${chassis_mass}" x="${chassis_length}" y="${chassis_width}" z="${chassis_height}"/>
+    </inertial>
+  </link>
+
+  <!-- ===== Wheels ===== -->
+  <xacro:macro name="wheel_link" params="name">
+    <link name="${name}">
+      <visual>
+        <origin rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+        <material name="black"/>
+      </visual>
+      <collision>
+        <origin rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+      </collision>
+      <inertial>
+        <mass value="${wheel_mass}"/>
+        <xacro:cyl_inertia m="${wheel_mass}" r="${wheel_radius}" h="${wheel_width}"/>
+      </inertial>
+    </link>
+    <gazebo reference="${name}">
+      <mu1>1.0</mu1>
+      <mu2>1.0</mu2>
+    </gazebo>
+  </xacro:macro>
+
+  <!-- rear: driven -->
+  <xacro:macro name="rear_wheel" params="side y">
+    <xacro:wheel_link name="rear_${side}_wheel"/>
+    <joint name="rear_${side}_wheel_joint" type="continuous">
+      <parent link="base_link"/>
+      <child link="rear_${side}_wheel"/>
+      <origin xyz="0 ${y} 0"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- front: steering knuckle (revolute about z) + free-spinning wheel -->
+  <xacro:macro name="front_wheel" params="side y">
+    <link name="front_${side}_steer">
+      <inertial>
+        <mass value="0.01"/>
+        <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+      </inertial>
+    </link>
+    <joint name="front_${side}_steer_joint" type="revolute">
+      <parent link="base_link"/>
+      <child link="front_${side}_steer"/>
+      <origin xyz="${wheel_base} ${y} 0"/>
+      <axis xyz="0 0 1"/>
+      <limit lower="${-steering_limit}" upper="${steering_limit}" effort="5" velocity="10"/>
+    </joint>
+    <xacro:wheel_link name="front_${side}_wheel"/>
+    <joint name="front_${side}_wheel_joint" type="continuous">
+      <parent link="front_${side}_steer"/>
+      <child link="front_${side}_wheel"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:rear_wheel side="left" y="${wheel_separation/2}"/>
+  <xacro:rear_wheel side="right" y="${-wheel_separation/2}"/>
+  <xacro:front_wheel side="left" y="${wheel_separation/2}"/>
+  <xacro:front_wheel side="right" y="${-wheel_separation/2}"/>
+
+  <!-- ===== Camera mast + camera ===== -->
+  <link name="camera_mast">
+    <visual>
+      <origin xyz="0 0 ${(cam_h - wheel_radius - chassis_height)/2}"/>
+      <geometry><box size="0.01 0.01 ${cam_h - wheel_radius - chassis_height}"/></geometry>
+      <material name="grey"/>
+    </visual>
+    <inertial>
+      <mass value="0.02"/>
+      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-6"/>
+    </inertial>
+  </link>
+  <joint name="camera_mast_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_mast"/>
+    <origin xyz="${cam_x - 0.01} 0 ${chassis_height}"/>
+  </joint>
+
+  <!-- camera_link: x forward along the optical axis (Gazebo convention) -->
+  <link name="camera_link">
+    <visual>
+      <geometry><box size="0.02 0.04 0.03"/></geometry>
+      <material name="black"/>
+    </visual>
+    <inertial>
+      <mass value="0.02"/>
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+    </inertial>
+  </link>
+  <joint name="camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <origin xyz="${cam_x} 0 ${cam_h - wheel_radius}" rpy="0 ${cam_pitch} 0"/>
+  </joint>
+
+  <!-- optical frame (z forward, x right, y down) for ROS image consumers -->
+  <link name="camera_optical_frame"/>
+  <joint name="camera_optical_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child link="camera_optical_frame"/>
+    <origin rpy="${-pi/2} 0 ${-pi/2}"/>
+  </joint>
+
+  <gazebo reference="camera_link">
+    <sensor name="camera" type="camera">
+      <always_on>true</always_on>
+      <update_rate>$(arg camera_rate)</update_rate>
+      <visualize>true</visualize>
+      <topic>/camera/image_raw</topic>
+      <gz_frame_id>camera_optical_frame</gz_frame_id>
+      <camera>
+        <camera_info_topic>/camera/camera_info</camera_info_topic>
+        <horizontal_fov>$(arg camera_hfov)</horizontal_fov>
+        <image>
+          <width>$(arg camera_width)</width>
+          <height>$(arg camera_height_px)</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip><near>0.02</near><far>10.0</far></clip>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.007</stddev>
+        </noise>
+      </camera>
+    </sensor>
+  </gazebo>
+
+  <!-- ===== IMU (on the main board) ===== -->
+  <link name="imu_link"/>
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="${wheel_base/2} 0 ${chassis_height}"/>
+  </joint>
+  <gazebo reference="imu_link">
+    <sensor name="imu" type="imu">
+      <always_on>true</always_on>
+      <update_rate>100</update_rate>
+      <topic>/imu</topic>
+      <gz_frame_id>imu_link</gz_frame_id>
+    </sensor>
+  </gazebo>
+
+  <!-- ===== Gazebo systems ===== -->
+  <gazebo>
+    <plugin filename="gz-sim-ackermann-steering-system" name="gz::sim::systems::AckermannSteering">
+      <left_joint>rear_left_wheel_joint</left_joint>
+      <right_joint>rear_right_wheel_joint</right_joint>
+      <left_steering_joint>front_left_steer_joint</left_steering_joint>
+      <right_steering_joint>front_right_steer_joint</right_steering_joint>
+      <kingpin_width>${wheel_separation}</kingpin_width>
+      <steering_limit>${steering_limit}</steering_limit>
+      <wheel_base>${wheel_base}</wheel_base>
+      <wheel_separation>${wheel_separation}</wheel_separation>
+      <wheel_radius>${wheel_radius}</wheel_radius>
+      <!-- steering servo speed: P gain on steering angle error (default 1 is far too slow) -->
+      <steer_p_gain>15.0</steer_p_gain>
+      <min_velocity>${-max_speed}</min_velocity>
+      <max_velocity>${max_speed}</max_velocity>
+      <min_acceleration>${-max_accel}</min_acceleration>
+      <max_acceleration>${max_accel}</max_acceleration>
+      <topic>/cmd_vel</topic>
+      <odom_topic>/odom</odom_topic>
+      <tf_topic>/tf</tf_topic>
+      <frame_id>odom</frame_id>
+      <child_frame_id>base_link</child_frame_id>
+      <odom_publish_frequency>50</odom_publish_frequency>
+    </plugin>
+
+    <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
+      <topic>/joint_states</topic>
+    </plugin>
+  </gazebo>
+</robot>
