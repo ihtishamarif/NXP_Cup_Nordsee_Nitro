@@ -10,6 +10,7 @@ import math
 import numpy as np
 import rclpy
 from geometry_msgs.msg import Twist
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
@@ -86,7 +87,10 @@ class LineFollowerNode(Node):
             self.dbg_pub.publish(out)
 
     def stop(self):
-        self.cmd_pub.publish(Twist())
+        # On Ctrl-C rclpy may already have shut the context down; then there is
+        # nobody left to tell, so skip the final zero command instead of crashing.
+        if rclpy.ok():
+            self.cmd_pub.publish(Twist())
 
 
 def main():
@@ -94,7 +98,7 @@ def main():
     node = LineFollowerNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.stop()
