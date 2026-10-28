@@ -6,6 +6,7 @@ Publishes   /cmd_vel           (geometry_msgs/Twist: linear.x m/s, angular.z rad
 """
 
 import math
+import time
 
 import numpy as np
 import rclpy
@@ -37,6 +38,8 @@ class LineFollowerNode(Node):
 
         self.follower = LineFollower(tp, cp, cam)
         self.last_stamp = None
+        self.stats_period = self.declare_parameter("stats_period", 5.0).value
+        self._reset_stats(None)
         self.cmd_pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self.dbg_pub = self.create_publisher(Image, "/line_follower/debug", 1)
         self.create_subscription(Image, "/camera/image_raw", self.on_image, qos_profile_sensor_data)
@@ -60,8 +63,42 @@ class LineFollowerNode(Node):
             return gray, np.repeat(gray[..., None], 3, axis=2)
         raise ValueError(f"unsupported encoding {msg.encoding}")
 
+    def _reset_stats(self, stamp):
+        self.st_t0, self.st_wall0 = stamp, time.monotonic()
+        self.st_frames, self.st_age, self.st_age_max, self.st_proc = 0, 0.0, 0.0, 0.0
+
+    def _stats(self, stamp, wall_start):
+        """Every few seconds: camera rate and delays as the controller sees them.
+
+        The controller needs roughly 30 fps and under 0.1 s from image to command;
+        tools/fast_sim.py --fps/--latency shows what happens when it gets less.
+        """
+        if self.st_t0 is None or stamp < self.st_t0:
+            self._reset_stats(stamp)
+            return
+        now = self.get_clock().now().nanoseconds * 1e-9
+        age = max(0.0, now - stamp)                       # sim seconds since the image was taken
+        self.st_frames += 1
+        self.st_age += age
+        self.st_age_max = max(self.st_age_max, age)
+        self.st_proc += time.monotonic() - wall_start
+        sim_span = stamp - self.st_t0
+        if sim_span >= self.stats_period:
+            wall_span = time.monotonic() - self.st_wall0
+            n = self.st_frames
+            self.get_logger().info(
+                f"camera {n / sim_span:.1f} fps (sim time), image age avg "
+                f"{1000 * self.st_age / n:.0f} ms max {1000 * self.st_age_max:.0f} ms, "
+                f"processing {1000 * self.st_proc / n:.1f} ms/frame, "
+                f"real-time factor {sim_span / max(wall_span, 1e-6):.2f}")
+            self._reset_stats(stamp)
+
     def on_image(self, msg):
+        wall_start = time.monotonic()
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        if self.last_stamp is not None and stamp < self.last_stamp - 0.5:
+            self.follower = LineFollower(self.follower.tp, self.follower.cp, self.follower.cam)
+            self.get_logger().info("sim time went backwards (world reset): follower restarted")
         dt = 1.0 / 30 if self.last_stamp is None else max(1e-3, stamp - self.last_stamp)
         self.last_stamp = stamp
         try:
@@ -76,6 +113,7 @@ class LineFollowerNode(Node):
             cmd.linear.x = float(speed)
             cmd.angular.z = float(self.follower.yaw_rate())
         self.cmd_pub.publish(cmd)
+        self._stats(stamp, wall_start)
 
         if self.publish_debug and self.dbg_pub.get_subscription_count() > 0:
             dbg = np.ascontiguousarray(draw_debug(bgr, self.follower))

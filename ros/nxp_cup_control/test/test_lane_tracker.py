@@ -27,7 +27,7 @@ def test_centered_goes_straight():
     f = LineFollower()
     for _ in range(30):     # speed ramps up at accel_limit
         v, steer = f.step(synthetic(), 1 / 30)
-    assert v > 1.0
+    assert v > 0.9 * f.cp.v_max
     assert abs(steer) < 0.02
 
 

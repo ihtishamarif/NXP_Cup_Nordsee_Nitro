@@ -173,10 +173,10 @@ class ScanLine:
 class ControlParams:
     wheel_base: float = 0.175     # m
     steering_limit: float = 0.45  # rad
-    kp: float = 1.2               # rad of steering per metre of near-row offset
-    kd: float = 0.05              # rad per (m/s)
+    kp: float = 0.7               # rad of steering per metre of near-row offset
+    kd: float = 0.08              # rad per (m/s)
     kf: float = 0.9               # feed-forward from far-row offset, rad per metre
-    v_max: float = 1.5            # m/s on straights
+    v_max: float = 1.0            # m/s on straights
     v_min: float = 0.8            # m/s in the tightest curves
     slow_offset: float = 0.15     # far-row offset (m) at which we are down to v_min
     hold_time: float = 0.6        # s to keep going on the last command with no lines

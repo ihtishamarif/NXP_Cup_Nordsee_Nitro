@@ -52,6 +52,17 @@ the crossing) it saves a report to `~/nxp_cup_runs/<date-time>/`:
 
 Reset the world in Gazebo to start a new attempt; the monitor re-arms itself.
 
+The line follower prints a stats line every 5 s:
+
+```
+camera 29.8 fps (sim time), image age avg 45 ms max 70 ms, processing 1.2 ms/frame, real-time factor 0.93
+```
+
+The controller wants about 30 fps and less than 0.1 s image age. Below that it starts to
+weave (`fast_sim.py --fps 15 --latency 0.2` shows the effect). The default top speed of
+1.0 m/s holds even then; raise `v_max` once the stats look healthy. A slow camera in
+Gazebo usually means it isn't rendering on the GPU (see the NVIDIA line below).
+
 Useful while it runs:
 
 ```bash
@@ -79,6 +90,7 @@ python3 tools/fast_sim.py --laps 2
 python3 tools/fast_sim.py --v-max 2.5 --v-min 1.2 --video lap.mp4
 python3 tools/fast_sim.py --y-off 0.12 --yaw-off -0.3      # crooked start
 python3 tools/fast_sim.py --cam-h 0.20 --pitch 0.6        # try another camera mount
+python3 tools/fast_sim.py --fps 15 --latency 0.15         # slow camera / delayed commands
 python3 -m pytest test                                     # unit tests
 ```
 
