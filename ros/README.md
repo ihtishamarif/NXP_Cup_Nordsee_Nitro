@@ -39,6 +39,9 @@ ros2 launch nxp_cup_gazebo sim.launch.py follower:=true obstacle:=true
 
 # no Gazebo window (the camera still renders)
 ros2 launch nxp_cup_gazebo sim.launch.py follower:=true gui:=false
+
+# TSL1401 line-scan camera instead of the 320x240 camera
+ros2 launch nxp_cup_gazebo sim.launch.py camera:=linescan follower:=true
 ```
 
 The lap monitor runs by default. It prints `LAP n: xx.xx s` in the launch terminal, and
@@ -78,6 +81,32 @@ If Gazebo renders slowly on the laptop, run it on the NVIDIA GPU:
 __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia ros2 launch nxp_cup_gazebo sim.launch.py
 ```
 
+## TSL1401 line-scan camera
+
+`camera:=linescan` swaps the car's camera for a TSL1401: one row of 128 greyscale
+pixels at 100 Hz. The rules allow it because it has no processor on board. The
+follower then uses `config/line_follower_linescan.yaml`, and the launch file mounts
+the simulated camera from the `camera:` section of that same file.
+
+What it needs, from the test bench:
+
+- **Look-ahead about 0.40 m in front of the lens.** Default mount: 25 cm high, tilted
+  0.56 rad (32°), lens field of view 1.2 rad (69°), so the 55 cm track fills about 100 of
+  the 128 pixels with margin either side. Looking closer (steeper tilt) made it fail.
+- **Gains:** kp 2.0, kd 0, no feed-forward. With one line there is no far row, so kp
+  does all the steering work.
+- **Results:** laps at 1.0, 1.5 and 2.0 m/s top speed (17.4 s, 13.1 s, 10.8 s) within
+  4-6 cm of the centre line, also at 50 Hz with extra delay and from a crooked start.
+- **Lens vignetting:** cheap lenses darken the image edges. Up to ~40% loss needs nothing;
+  beyond that set `tracker.vignette_comp` to the loss you measure (point the camera at
+  plain white and compare edge vs centre). A rough value is enough.
+
+`/line_follower/debug` shows the brightness profile: the stretched pixel row on top,
+the profile curve with the threshold (orange) and detected edges (red) below.
+
+Not simulated: exposure time. On the real sensor you set the integration time, and it
+has to adapt to the hall lighting so white doesn't saturate and black stays dark.
+
 ## Tune without Gazebo
 
 `tools/fast_sim.py` renders the camera view straight from the track texture (same pinhole
@@ -91,6 +120,8 @@ python3 tools/fast_sim.py --v-max 2.5 --v-min 1.2 --video lap.mp4
 python3 tools/fast_sim.py --y-off 0.12 --yaw-off -0.3      # crooked start
 python3 tools/fast_sim.py --cam-h 0.20 --pitch 0.6        # try another camera mount
 python3 tools/fast_sim.py --fps 15 --latency 0.15         # slow camera / delayed commands
+python3 tools/fast_sim.py --camera linescan               # TSL1401
+python3 tools/fast_sim.py --camera linescan --vignette 0.5  # with a cheap lens
 python3 -m pytest test                                     # unit tests
 ```
 
@@ -118,8 +149,9 @@ The car dimensions in `nxp_cup_car.urdf.xacro` are placeholders near the 2025 3D
 Measure the real car and update:
 
 - wheel base, wheel separation, wheel radius, steering limit (xacro properties)
-- camera height, pitch and field of view: xacro args **and** `camera:` in
-  `config/line_follower.yaml` (the tracker predicts lane width from them)
+- camera height, pitch and field of view: the `camera:` section of
+  `config/line_follower.yaml` (or `line_follower_linescan.yaml`). The launch file mounts the
+  simulated camera from there, and the tracker predicts lane width from it.
 
 ## How the line follower works
 

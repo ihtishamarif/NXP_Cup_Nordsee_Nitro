@@ -13,6 +13,10 @@
 <robot name="nxp_cup_car" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
   <!-- ===== Parameters (measure these on the real car) ===== -->
+  <!-- camera_type: "area" = 320x240 colour camera at 30 Hz
+                    "linescan" = TSL1401 line-scan sensor: 128 x 1 greyscale pixels at 100 Hz.
+       The launch file passes height / pitch / hfov from the line follower's YAML. -->
+  <xacro:arg name="camera_type" default="area"/>
   <xacro:arg name="camera_height" default="0.25"/>   <!-- lens above ground, m -->
   <xacro:arg name="camera_x" default="0.10"/>        <!-- lens ahead of rear axle, m -->
   <xacro:arg name="camera_pitch" default="0.75"/>    <!-- tilt down from horizontal, rad -->
@@ -39,6 +43,21 @@
   <xacro:property name="cam_h" value="$(arg camera_height)"/>
   <xacro:property name="cam_x" value="$(arg camera_x)"/>
   <xacro:property name="cam_pitch" value="$(arg camera_pitch)"/>
+  <xacro:property name="cam_type" value="$(arg camera_type)"/>
+  <xacro:if value="${cam_type == 'linescan'}">
+    <!-- TSL1401: one row of 128 pixels. A 128 x 1 render with square pixels gives the
+         same thin strip of ground the real sensor (63.5 x 55.5 um pixels) sees. -->
+    <xacro:property name="img_w" value="128"/>
+    <xacro:property name="img_h" value="1"/>
+    <xacro:property name="img_rate" value="100"/>
+    <xacro:property name="img_format" value="L8"/>
+  </xacro:if>
+  <xacro:unless value="${cam_type == 'linescan'}">
+    <xacro:property name="img_w" value="$(arg camera_width)"/>
+    <xacro:property name="img_h" value="$(arg camera_height_px)"/>
+    <xacro:property name="img_rate" value="$(arg camera_rate)"/>
+    <xacro:property name="img_format" value="R8G8B8"/>
+  </xacro:unless>
 
   <!-- ===== Helpers ===== -->
   <xacro:macro name="box_inertia" params="m x y z">
@@ -184,7 +203,7 @@
   <gazebo reference="camera_link">
     <sensor name="camera" type="camera">
       <always_on>true</always_on>
-      <update_rate>$(arg camera_rate)</update_rate>
+      <update_rate>${img_rate}</update_rate>
       <visualize>true</visualize>
       <topic>/camera/image_raw</topic>
       <frame_id>camera_optical_frame</frame_id>
@@ -192,9 +211,9 @@
         <camera_info_topic>/camera/camera_info</camera_info_topic>
         <horizontal_fov>$(arg camera_hfov)</horizontal_fov>
         <image>
-          <width>$(arg camera_width)</width>
-          <height>$(arg camera_height_px)</height>
-          <format>R8G8B8</format>
+          <width>${img_w}</width>
+          <height>${img_h}</height>
+          <format>${img_format}</format>
         </image>
         <clip><near>0.02</near><far>10.0</far></clip>
         <noise>

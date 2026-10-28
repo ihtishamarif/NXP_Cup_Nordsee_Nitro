@@ -1,0 +1,36 @@
+# Line follower parameters for the TSL1401 line-scan camera (128 x 1 pixels).
+# Same structure as line_follower.yaml; tools/fast_sim.py --camera linescan reads this file.
+# Keep the decimal point on float values (2.0, not 2): ROS rejects an int for a float parameter.
+line_follower:
+  ros__parameters:
+    enabled: true
+    publish_debug: true
+    stats_period: 5.0
+
+    camera:             # must match the xacro linescan_* args and the real mount
+      height: 0.25      # lens above ground, m
+      pitch: 0.56       # tilt down from horizontal, rad (looks ~0.40 m ahead of the lens)
+      hfov: 1.2         # field of view of the lens across the 128 pixels, rad
+
+    tracker:
+      near_row: 0.5     # the one and only row
+      far_row: -1.0     # no second line on a line-scan camera
+      band: 1
+      window: 0.12
+      min_contrast: 50
+      width_tolerance: 0.20
+      vignette_comp: 0.0   # lens brightness loss at the image edges; measure on plain white
+      lost_frames: 25   # ~0.25 s at 100 Hz
+
+    control:
+      wheel_base: 0.175
+      steering_limit: 0.45
+      kp: 2.0
+      kd: 0.0 
+      kf: 0.0           # no far line to feed forward from
+      v_max: 1.0
+      v_min: 0.8
+      slow_offset: 0.15
+      hold_time: 0.6
+      v_hold: 0.8
+      accel_limit: 3.5
