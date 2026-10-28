@@ -25,7 +25,7 @@ def synthetic(center_shift_px=0, lane=None):
 
 def test_centered_goes_straight():
     f = LineFollower()
-    for _ in range(5):
+    for _ in range(30):     # speed ramps up at accel_limit
         v, steer = f.step(synthetic(), 1 / 30)
     assert v > 1.0
     assert abs(steer) < 0.02
@@ -45,7 +45,7 @@ def test_all_white_holds_then_stops():
     white = np.full((H, W), 245, np.uint8)
     v, _ = f.step(white, 1 / 30)
     assert v > 0               # crossing: keep going on the last command
-    for _ in range(30):
+    for _ in range(60):
         v, _ = f.step(white, 1 / 30)
     assert v == 0.0            # lost for longer than hold_time: stop
 

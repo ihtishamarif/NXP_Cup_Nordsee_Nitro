@@ -31,3 +31,4 @@ line_follower:
       slow_offset: 0.15
       hold_time: 0.6
       v_hold: 0.8
+      accel_limit: 3.5  # keep below the URDF max_acceleration (4.0)

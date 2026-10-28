@@ -6,7 +6,7 @@ Three packages:
 |---|---|
 | `nxp_cup_description` | Car model (xacro): Ackermann steering, forward camera, IMU |
 | `nxp_cup_gazebo` | Track generator, world, "end of race" cube, ROS-Gazebo bridge, `sim.launch.py` |
-| `nxp_cup_control` | Line follower: ROS-free core (`lane_tracker.py`), ROS 2 node, fast test bench |
+| `nxp_cup_control` | Line follower: ROS-free core (`lane_tracker.py`), ROS 2 node, lap monitor, fast test bench |
 
 The track follows the rulebook: 55 cm wide, matte white, 2 cm black line on each edge,
 90° crossing. The default layout is a figure eight (5.75 m x 3.95 m, 15.8 m lap) with two
@@ -41,6 +41,17 @@ ros2 launch nxp_cup_gazebo sim.launch.py follower:=true obstacle:=true
 ros2 launch nxp_cup_gazebo sim.launch.py follower:=true gui:=false
 ```
 
+The lap monitor runs by default. It prints `LAP n: xx.xx s` in the launch terminal, and
+when the car goes off the track (rulebook: more than half the wheels off, or wrong exit at
+the crossing) it saves a report to `~/nxp_cup_runs/<date-time>/`:
+
+- `failure.mp4`: the last 4 s of the follower's debug view, with commanded vs actual
+  steering angle on every frame
+- `log.csv`: the last 10 s of true pose, distance from the centre line, speed and steering
+- `summary.txt`: where and why
+
+Reset the world in Gazebo to start a new attempt; the monitor re-arms itself.
+
 Useful while it runs:
 
 ```bash
@@ -71,7 +82,8 @@ python3 tools/fast_sim.py --cam-h 0.20 --pitch 0.6        # try another camera m
 python3 -m pytest test                                     # unit tests
 ```
 
-It fails a run the way the rulebook does: more than half the wheels off the track, or
+Its drive model copies how Gazebo's Ackermann plugin turns `/cmd_vel` into a steering
+angle. It fails a run the way the rulebook does: more than half the wheels off the track, or
 leaving the crossing on the wrong branch. It has no tyre slip, so its top speed is
 optimistic; confirm in Gazebo, then on the real car.
 

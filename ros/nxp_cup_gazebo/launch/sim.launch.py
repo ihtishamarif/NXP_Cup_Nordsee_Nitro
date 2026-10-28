@@ -5,6 +5,9 @@
     ros2 launch nxp_cup_gazebo sim.launch.py obstacle:=true   # with the "end of race" cube
     ros2 launch nxp_cup_gazebo sim.launch.py gui:=false       # headless (camera still renders)
 
+The lap monitor (on by default) prints lap times and, when the car goes off the
+track, saves a report with a video of the last seconds to ~/nxp_cup_runs/.
+
 Spawn pose and obstacle pose default to the values in config/track_info.yaml,
 which scripts/generate_track.py writes for the current layout.
 """
@@ -41,6 +44,8 @@ def generate_launch_description():
         DeclareLaunchArgument("world", default_value=os.path.join(pkg, "worlds", "nxp_cup.sdf")),
         DeclareLaunchArgument("follower", default_value="false",
                               description="start nxp_cup_control line_follower"),
+        DeclareLaunchArgument("monitor", default_value="true",
+                              description="lap times + failure reports in ~/nxp_cup_runs"),
         DeclareLaunchArgument("obstacle", default_value="false",
                               description="spawn the 20 cm 'end of race' cube"),
         DeclareLaunchArgument("x", default_value=str(spawn["x"])),
@@ -105,5 +110,11 @@ def generate_launch_description():
             use_sim_time],
     )
 
+    monitor = Node(
+        package="nxp_cup_control", executable="lap_monitor", output="screen",
+        condition=IfCondition(LaunchConfiguration("monitor")),
+        parameters=[use_sim_time],
+    )
+
     return LaunchDescription(args + [resource_path, gazebo, rsp, spawn_car, spawn_obstacle,
-                                     bridge, follower])
+                                     bridge, follower, monitor])

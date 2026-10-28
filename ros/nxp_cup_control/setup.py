@@ -22,6 +22,7 @@ setup(
     entry_points={
         "console_scripts": [
             "line_follower = nxp_cup_control.line_follower:main",
+            "lap_monitor = nxp_cup_control.lap_monitor:main",
         ],
     },
 )

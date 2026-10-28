@@ -181,6 +181,9 @@ class ControlParams:
     slow_offset: float = 0.15     # far-row offset (m) at which we are down to v_min
     hold_time: float = 0.6        # s to keep going on the last command with no lines
     v_hold: float = 0.8           # m/s while holding
+    accel_limit: float = 3.5      # m/s^2 ramp on the speed output; keep it below the
+                                  # drive's own limit (URDF max_acceleration = 4) so the
+                                  # speed we compute yaw rate from is the speed it really runs
 
 
 class LineFollower:
@@ -214,12 +217,9 @@ class LineFollower:
 
         if n.measured == 0 and f.measured == 0:
             self.lost_for += dt
-            if self.lost_for > cp.hold_time:
-                self.speed = 0.0
-            else:
-                self.speed = min(self.speed, cp.v_hold)
+            target = 0.0 if self.lost_for > cp.hold_time else min(self.speed, cp.v_hold)
             self.prev_err = None
-            return self.speed, self.steer
+            return self._ramp(target, dt), self.steer
         self.lost_for = 0.0
 
         e_near = self._offset_m(n, w) if n.measured else None
@@ -235,11 +235,21 @@ class LineFollower:
         self.steer = max(-cp.steering_limit, min(cp.steering_limit, steer))
 
         slow = min(1.0, abs(e_far) / cp.slow_offset)
-        self.speed = cp.v_max - (cp.v_max - cp.v_min) * slow
-        return self.speed, self.steer
+        return self._ramp(cp.v_max - (cp.v_max - cp.v_min) * slow, dt), self.steer
+
+    def _ramp(self, target, dt):
+        dv = self.cp.accel_limit * max(dt, 0.0)
+        self.speed += max(-dv, min(dv, target - self.speed))
+        return self.speed
 
     def yaw_rate(self):
-        """Ackermann: convert the steering angle to angular.z for cmd_vel."""
+        """Ackermann: convert the steering angle to angular.z for cmd_vel.
+
+        Gazebo's AckermannSteering turns (linear.x, angular.z) back into a steering
+        angle with R = v / angular.z, using its acceleration-limited copy of v.
+        self.speed is already ramped below that limit, so both agree and the car
+        steers exactly self.steer.
+        """
         return self.speed * math.tan(self.steer) / self.cp.wheel_base
 
 

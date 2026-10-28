@@ -27,10 +27,10 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from nxp_cup_control.lane_tracker import (CameraGeometry, ControlParams,  # noqa: E402
                                           LineFollower, TrackerParams, draw_debug)
+from nxp_cup_control.track_check import CarShape, TrackProgress  # noqa: E402
 
 GAZEBO_PKG = HERE.parent.parent / "nxp_cup_gazebo"
 SKY_BGR = (217, 204, 191)
-TRACK_HALF = 0.275
 
 
 class Camera:
@@ -94,19 +94,16 @@ def run(args):
     y += args.y_off * math.cos(th)
     th += args.yaw_off
     v = delta = 0.0
-    cmd_v = cmd_d = 0.0          # command applied (one frame late)
+    cmd_lin = cmd_ang = 0.0      # cmd_vel twist applied (one frame late)
     pending = (0.0, 0.0)
+    steer_cap = math.atan(math.sin(cp.steering_limit))  # plugin: min radius = L / sin(limit)
 
-    n_cl = len(cl)
-    d0 = np.hypot(cl[:, 0] - x, cl[:, 1] - y)
-    idx = int(np.argmin(d0))
-    start_idx, progress = idx, 0      # progress in centre-line samples, tracked locally
-    step_len = 0.005
+    track = TrackProgress(cl, info["length_m"], CarShape(wheel_base=L, wheel_separation=2 * half_sep))
 
     dt_phys, frame_dt = 0.002, 1.0 / 30
     t, next_frame = 0.0, 0.0
     max_off, sum_sq, n_samples = 0.0, 0.0, 0
-    lap_times, last_lap_t = [], 0.0
+    lap_times = []
     failure = None
     writer = None
     if args.video:
@@ -116,41 +113,21 @@ def run(args):
     while t < args.timeout:
         if t >= next_frame:
             next_frame += frame_dt
-            cmd_v, cmd_d = pending
+            cmd_lin, cmd_ang = pending
             img = cam.render(tex, ext, ppm, (x, y, th), rng)
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             spd, st = follower.step(gray, frame_dt)
-            pending = (spd, st)
+            pending = (spd, follower.yaw_rate())    # what the ROS node publishes
 
-            # progress along the centre line, searched locally so crossings don't confuse it
-            win = np.arange(idx - 40, idx + 120) % n_cl
-            dd = np.hypot(cl[win, 0] - x, cl[win, 1] - y)
-            k = int(np.argmin(dd))
-            new_idx = int(win[k])
-            progress += (new_idx - idx) % n_cl if (new_idx - idx) % n_cl < n_cl // 2 else -((idx - new_idx) % n_cl)
-            idx = new_idx
-            if dd[k] > 0.4:
-                failure = f"left the track branch at t={t:.2f}s (wrong exit at crossing?)"
-                break
-
-            # rulebook: failure when more than 51% of the wheels lose contact with the track
-            c, s = math.cos(th), math.sin(th)
-            wheels = [(0, half_sep), (0, -half_sep), (L, half_sep), (L, -half_sep)]
-            off = 0
-            for wx, wy in wheels:
-                gx, gy = x + c * wx - s * wy, y + s * wx + c * wy
-                dw = np.hypot(cl[win, 0] - gx, cl[win, 1] - gy).min()
-                off += dw > TRACK_HALF
-            lateral = dd[k]
+            event, lateral = track.update(x, y, th, t)
             max_off = max(max_off, lateral)
             sum_sq += lateral ** 2
             n_samples += 1
-            if off > 2:
-                failure = f"{off} wheels off the track at t={t:.2f}s, x={x:.2f} y={y:.2f}"
+            if event and event[0] == "fail":
+                failure = f"{event[1]} at t={t:.2f}s, x={x:.2f} y={y:.2f}"
                 break
-            if progress * step_len >= info["length_m"] * (len(lap_times) + 1):
-                lap_times.append(t - last_lap_t)
-                last_lap_t = t
+            if event and event[0] == "lap":
+                lap_times.append(event[1])
                 if len(lap_times) >= args.laps:
                     break
 
@@ -165,16 +142,25 @@ def run(args):
                 pane[:mh] = cv2.resize(mini, (320, mh))
                 writer.write(np.hstack([dbg, pane]))
 
-        # plant: servo-like steering (matches steer_p_gain in the URDF), accel limit
-        delta += np.clip(15.0 * (cmd_d - delta), -10.0, 10.0) * dt_phys
-        delta = float(np.clip(delta, -cp.steering_limit, cp.steering_limit))
-        v += float(np.clip(cmd_v - v, -4.0 * dt_phys, 4.0 * dt_phys))
+        # plant: mirrors gz-sim's AckermannSteering. It rate-limits linear.x first
+        # (max_acceleration in the URDF), then derives the turning radius from the
+        # *limited* speed: R = v / angular.z. The steering joint follows with
+        # steer_p_gain = 15.
+        v += float(np.clip(cmd_lin - v, -4.0 * dt_phys, 4.0 * dt_phys))
+        if abs(cmd_ang) < 0.001:
+            delta_target = 0.0
+        elif abs(v) < 1e-9:
+            delta_target = math.copysign(steer_cap, cmd_ang)
+        else:
+            delta_target = math.atan(L * cmd_ang / v)
+            delta_target = float(np.clip(delta_target, -steer_cap, steer_cap))
+        delta += np.clip(15.0 * (delta_target - delta), -10.0, 10.0) * dt_phys
         x += v * math.cos(th) * dt_phys
         y += v * math.sin(th) * dt_phys
         th += v * math.tan(delta) / L * dt_phys
         t += dt_phys
     else:
-        failure = failure or f"timeout after {args.timeout}s ({progress*step_len:.1f} m driven)"
+        failure = failure or f"timeout after {args.timeout}s ({track.distance:.1f} m driven)"
 
     if writer is not None:
         writer.release()
