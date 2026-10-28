@@ -55,3 +55,37 @@ def test_one_line_out_of_view_still_initialises():
     v, _ = f.step(synthetic(+120), 1 / 30)   # right line is off the image
     assert f.near.last.measured >= 1
     assert v > 0
+
+
+def _linescan_row(shift_px=0, vignette=0.0):
+    """128 x 1 TSL1401-style row: grey floor, black lines, white lane."""
+    from nxp_cup_control.lane_tracker import TrackerParams, ControlParams
+    geo = CameraGeometry(height=0.25, pitch=0.56, hfov=1.2)
+    lane = geo.lane_px(0.5, 128, 1)
+    row = np.full(128, 95.0)
+    c = 64 + shift_px
+    lo, hi = int(c - lane / 2), int(c + lane / 2)
+    row[max(0, lo - 2):max(0, lo)] = 20
+    row[max(0, lo):min(128, hi)] = 245
+    row[max(0, hi):min(128, hi + 2)] = 20
+    xs = (np.arange(128) + 0.5) / 128 * 2 - 1
+    row *= 1 - vignette * xs ** 2
+    tp = TrackerParams(near_row=0.5, far_row=-1.0, band=1, vignette_comp=vignette)
+    return row.astype(np.uint8)[None, :], LineFollower(tp, ControlParams(kp=2.0, kd=0.0, kf=0.0), geo)
+
+
+def test_linescan_single_row():
+    img, f = _linescan_row(+12)          # lane centre right of the image centre
+    for _ in range(5):
+        _, steer = f.step(img, 0.01)
+    assert f.far is None
+    assert f.near.last.measured == 2
+    assert steer < -0.05
+
+
+def test_linescan_vignetting_compensated():
+    img, f = _linescan_row(0, vignette=0.6)
+    for _ in range(5):
+        _, steer = f.step(img, 0.01)
+    assert f.near.last.measured == 2
+    assert abs(steer) < 0.03

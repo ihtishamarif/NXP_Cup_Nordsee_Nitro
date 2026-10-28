@@ -19,6 +19,7 @@ line_follower:
       window: 0.10
       min_contrast: 50
       width_tolerance: 0.20
+      vignette_comp: 0.0   # lens brightness loss at the image edges; measure on plain white
       lost_frames: 8
 
     control:

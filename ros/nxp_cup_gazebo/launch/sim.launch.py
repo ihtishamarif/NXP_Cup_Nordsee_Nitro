@@ -4,6 +4,12 @@
     ros2 launch nxp_cup_gazebo sim.launch.py follower:=true   # plus the line follower
     ros2 launch nxp_cup_gazebo sim.launch.py obstacle:=true   # with the "end of race" cube
     ros2 launch nxp_cup_gazebo sim.launch.py gui:=false       # headless (camera still renders)
+    ros2 launch nxp_cup_gazebo sim.launch.py camera:=linescan follower:=true   # TSL1401
+
+camera:=area (320x240) uses nxp_cup_control/config/line_follower.yaml,
+camera:=linescan (TSL1401, 128x1) uses line_follower_linescan.yaml. The camera
+mount (height, pitch, field of view) on the simulated car is read from the
+camera: section of that same file, so the car and the tracker always agree.
 
 The lap monitor (on by default) prints lap times and, when the car goes off the
 track, saves a report with a video of the last seconds to ~/nxp_cup_runs/.
@@ -18,11 +24,10 @@ import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (AppendEnvironmentVariable, DeclareLaunchArgument,
-                            IncludeLaunchDescription)
+                            IncludeLaunchDescription, OpaqueFunction)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import (Command, LaunchConfiguration, PathJoinSubstitution,
-                                  PythonExpression)
+from launch.substitutions import Command, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -51,9 +56,8 @@ def generate_launch_description():
         DeclareLaunchArgument("x", default_value=str(spawn["x"])),
         DeclareLaunchArgument("y", default_value=str(spawn["y"])),
         DeclareLaunchArgument("yaw", default_value=str(spawn["yaw"])),
-        DeclareLaunchArgument("camera_height", default_value="0.25"),
-        DeclareLaunchArgument("camera_pitch", default_value="0.75"),
-        DeclareLaunchArgument("camera_hfov", default_value="1.6"),
+        DeclareLaunchArgument("camera", default_value="area", choices=["area", "linescan"],
+                              description="area: 320x240 camera; linescan: TSL1401 128x1"),
     ]
 
     # Let Gazebo find model://nxp_cup_track and model://nxp_cup_stop_obstacle
@@ -66,19 +70,6 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory("ros_gz_sim"), "launch", "gz_sim.launch.py")),
         launch_arguments={"gz_args": gz_args, "on_exit_shutdown": "true"}.items(),
-    )
-
-    robot_description = ParameterValue(Command([
-        "xacro ", os.path.join(desc_pkg, "urdf", "nxp_cup_car.urdf.xacro"),
-        " camera_height:=", LaunchConfiguration("camera_height"),
-        " camera_pitch:=", LaunchConfiguration("camera_pitch"),
-        " camera_hfov:=", LaunchConfiguration("camera_hfov"),
-    ]), value_type=str)
-
-    rsp = Node(
-        package="robot_state_publisher", executable="robot_state_publisher",
-        parameters=[{"robot_description": robot_description}, use_sim_time],
-        output="screen",
     )
 
     spawn_car = Node(
@@ -102,19 +93,42 @@ def generate_launch_description():
         parameters=[{"config_file": os.path.join(pkg, "config", "bridge.yaml")}, use_sim_time],
     )
 
-    follower = Node(
-        package="nxp_cup_control", executable="line_follower", output="screen",
-        condition=IfCondition(LaunchConfiguration("follower")),
-        parameters=[PathJoinSubstitution([
-            get_package_share_directory("nxp_cup_control"), "config", "line_follower.yaml"]),
-            use_sim_time],
-    )
-
     monitor = Node(
         package="nxp_cup_control", executable="lap_monitor", output="screen",
         condition=IfCondition(LaunchConfiguration("monitor")),
         parameters=[use_sim_time],
     )
 
-    return LaunchDescription(args + [resource_path, gazebo, rsp, spawn_car, spawn_obstacle,
-                                     bridge, follower, monitor])
+    return LaunchDescription(args + [resource_path, gazebo, OpaqueFunction(function=_car_nodes),
+                                     spawn_car, spawn_obstacle, bridge, monitor])
+
+
+def _car_nodes(context):
+    """robot_state_publisher + line follower, set up for the chosen camera."""
+    camera = LaunchConfiguration("camera").perform(context)
+    ctrl_cfg = os.path.join(get_package_share_directory("nxp_cup_control"), "config",
+                            "line_follower_linescan.yaml" if camera == "linescan"
+                            else "line_follower.yaml")
+    with open(ctrl_cfg) as f:
+        mount = yaml.safe_load(f)["line_follower"]["ros__parameters"]["camera"]
+
+    xacro_file = os.path.join(get_package_share_directory("nxp_cup_description"),
+                              "urdf", "nxp_cup_car.urdf.xacro")
+    robot_description = ParameterValue(Command([
+        "xacro ", xacro_file,
+        f" camera_type:={camera} camera_height:={mount['height']}"
+        f" camera_pitch:={mount['pitch']} camera_hfov:={mount['hfov']}",
+    ]), value_type=str)
+    use_sim_time = {"use_sim_time": True}
+
+    rsp = Node(
+        package="robot_state_publisher", executable="robot_state_publisher",
+        parameters=[{"robot_description": robot_description}, use_sim_time],
+        output="screen",
+    )
+    follower = Node(
+        package="nxp_cup_control", executable="line_follower", output="screen",
+        condition=IfCondition(LaunchConfiguration("follower")),
+        parameters=[ctrl_cfg, use_sim_time],
+    )
+    return [rsp, follower]

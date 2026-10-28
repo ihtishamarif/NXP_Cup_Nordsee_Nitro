@@ -11,6 +11,12 @@ more than half the wheels off the track, or leaving a crossing on the wrong bran
     python3 tools/fast_sim.py --laps 3 --video lap.mp4
     python3 tools/fast_sim.py --v-max 2.0 --kp 1.4  # try other gains
     python3 tools/fast_sim.py --y-off 0.12 --yaw-off -0.3   # crooked start
+    python3 tools/fast_sim.py --camera linescan             # TSL1401 line-scan camera
+    python3 tools/fast_sim.py --camera linescan --vignette 0.4   # with a cheap lens
+
+Parameters come from the same YAML file the ROS node uses
+(config/line_follower.yaml, or line_follower_linescan.yaml for --camera linescan);
+command-line options override single values.
 
 Run generate_track.py in nxp_cup_gazebo first if you changed the layout.
 """
@@ -31,14 +37,36 @@ from nxp_cup_control.lane_tracker import (CameraGeometry, ControlParams,  # noqa
 from nxp_cup_control.track_check import CarShape, TrackProgress  # noqa: E402
 
 GAZEBO_PKG = HERE.parent.parent / "nxp_cup_gazebo"
+CONFIG_DIR = HERE.parent / "config"
 SKY_BGR = (217, 204, 191)
+
+# Image size and frame rate of each camera option; must match the xacro.
+CAMERAS = {
+    "area": {"width": 320, "height": 240, "fps": 30.0, "ss": 2,
+             "config": "line_follower.yaml"},
+    "linescan": {"width": 128, "height": 1, "fps": 100.0, "ss": 4,   # TSL1401
+                 "config": "line_follower_linescan.yaml"},
+}
+
+
+def load_config(path):
+    """Read the line_follower ROS parameter file into the core's dataclasses."""
+    import yaml
+    p = yaml.safe_load(Path(path).read_text())["line_follower"]["ros__parameters"]
+    return (TrackerParams(**p.get("tracker", {})), ControlParams(**p.get("control", {})),
+            CameraGeometry(**p.get("camera", {})))
 
 
 class Camera:
     """Pinhole camera on the car; precomputes where each pixel hits the ground."""
 
-    def __init__(self, width=320, height=240, hfov=1.6, cam_h=0.25, cam_x=0.10, pitch=0.75, ss=2):
+    def __init__(self, width=320, height=240, hfov=1.6, cam_h=0.25, cam_x=0.10, pitch=0.75, ss=2,
+                 vignette=0.0):
         self.w, self.h, self.ss = width, height, ss
+        # lens vignetting: brightness falls off towards the image sides by up to
+        # `vignette` at the edges (cheap M12 lenses on line-scan modules do this a lot)
+        xs = (np.arange(width) + 0.5) / width * 2 - 1
+        self.gain = (1.0 - vignette * xs ** 2)[None, :, None]
         W, H = width * ss, height * ss
         fx = (W / 2) / math.tan(hfov / 2)
         u, v = np.meshgrid(np.arange(W) + 0.5, np.arange(H) + 0.5)
@@ -65,6 +93,8 @@ class Camera:
         img = cv2.remap(tex, mapx, mapy, cv2.INTER_LINEAR, borderValue=(95, 95, 95))
         img[~self.ground] = SKY_BGR
         img = cv2.resize(img, (self.w, self.h), interpolation=cv2.INTER_AREA)
+        img = img.reshape(self.h, self.w, 3)
+        img = (img * self.gain).astype(np.uint8)
         if rng is not None:   # same noise level as the Gazebo sensor (stddev 0.007)
             img = np.clip(img + rng.normal(0, 0.007 * 255, img.shape), 0, 255).astype(np.uint8)
         return img
@@ -82,10 +112,19 @@ def load_track():
 def run(args):
     info, tex, cl = load_track()
     ppm, ext = info["texture_px_per_m"], info["extent"]
-    cam = Camera(hfov=args.hfov, cam_h=args.cam_h, pitch=args.pitch)
-    cp = ControlParams(kp=args.kp, kd=args.kd, kf=args.kf, v_max=args.v_max, v_min=args.v_min)
-    follower = LineFollower(TrackerParams(), cp,
-                            CameraGeometry(height=args.cam_h, pitch=args.pitch, hfov=args.hfov))
+    spec = CAMERAS[args.camera]
+    tp, cp, geo = load_config(args.config or CONFIG_DIR / spec["config"])
+    for name, obj, attr in (("hfov", geo, "hfov"), ("cam_h", geo, "height"), ("pitch", geo, "pitch"),
+                            ("kp", cp, "kp"), ("kd", cp, "kd"), ("kf", cp, "kf"),
+                            ("v_max", cp, "v_max"), ("v_min", cp, "v_min")):
+        if getattr(args, name, None) is not None:
+            setattr(obj, attr, getattr(args, name))
+    args.fps = args.fps or spec["fps"]
+    if args.latency is None:
+        args.latency = 1.0 / args.fps
+    cam = Camera(spec["width"], spec["height"], hfov=geo.hfov, cam_h=geo.height, pitch=geo.pitch,
+                 ss=spec["ss"], vignette=args.vignette)
+    follower = LineFollower(tp, cp, geo)
     rng = np.random.default_rng(0)
 
     L, half_sep = cp.wheel_base, 0.075
@@ -176,20 +215,18 @@ def main():
     ap.add_argument("--laps", type=int, default=1)
     ap.add_argument("--timeout", type=float, default=120.0, help="rulebook: 120 s per attempt")
     ap.add_argument("--video", help="write an mp4 of camera view + debug overlay")
-    ap.add_argument("--fps", type=float, default=30.0, help="camera frame rate")
-    ap.add_argument("--latency", type=float, default=1 / 30,
-                    help="seconds from camera frame to wheels reacting")
+    ap.add_argument("--camera", choices=sorted(CAMERAS), default="area",
+                    help="area: 320x240 camera; linescan: TSL1401 128x1")
+    ap.add_argument("--config", help="line follower YAML (default: the one for --camera)")
+    ap.add_argument("--vignette", type=float, default=0.0,
+                    help="brightness lost at the image edges, 0..1")
+    ap.add_argument("--fps", type=float, help="camera frame rate (default: the camera's)")
+    ap.add_argument("--latency", type=float,
+                    help="seconds from camera frame to wheels reacting (default: one frame)")
     ap.add_argument("--y-off", type=float, default=0.0, help="start offset to the left, m")
     ap.add_argument("--yaw-off", type=float, default=0.0, help="start heading error, rad")
-    ap.add_argument("--hfov", type=float, default=1.6)
-    ap.add_argument("--cam-h", type=float, default=0.25)
-    ap.add_argument("--pitch", type=float, default=0.75)
-    d = ControlParams()
-    ap.add_argument("--kp", type=float, default=d.kp)
-    ap.add_argument("--kd", type=float, default=d.kd)
-    ap.add_argument("--kf", type=float, default=d.kf)
-    ap.add_argument("--v-max", type=float, default=d.v_max)
-    ap.add_argument("--v-min", type=float, default=d.v_min)
+    for name in ("hfov", "cam-h", "pitch", "kp", "kd", "kf", "v-max", "v-min"):
+        ap.add_argument("--" + name, type=float, help="override the YAML value")
     args = ap.parse_args()
 
     laps, max_off, rms, failure = run(args)
