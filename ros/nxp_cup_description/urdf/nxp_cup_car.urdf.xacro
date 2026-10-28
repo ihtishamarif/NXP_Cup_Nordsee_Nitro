@@ -187,7 +187,7 @@
       <update_rate>$(arg camera_rate)</update_rate>
       <visualize>true</visualize>
       <topic>/camera/image_raw</topic>
-      <gz_frame_id>camera_optical_frame</gz_frame_id>
+      <frame_id>camera_optical_frame</frame_id>
       <camera>
         <camera_info_topic>/camera/camera_info</camera_info_topic>
         <horizontal_fov>$(arg camera_hfov)</horizontal_fov>
@@ -218,7 +218,7 @@
       <always_on>true</always_on>
       <update_rate>100</update_rate>
       <topic>/imu</topic>
-      <gz_frame_id>imu_link</gz_frame_id>
+      <frame_id>imu_link</frame_id>
     </sensor>
   </gazebo>
 
