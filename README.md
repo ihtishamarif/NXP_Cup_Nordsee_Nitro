@@ -152,9 +152,9 @@ Since the first finished lap is the one that counts, pick the fastest profile th
 
 | Name | GitHub | Focus |
 |---|---|---|
-| Ihtisham | [@ihtishamarif](https://github.com/ihtishamarif) | Simulation, line follower |
-| Niyaz | | _TBD_ |
-| _TBD_ | | |
+| Ihtisham Arif | [@ihtishamarif](https://github.com/ihtishamarif) | Simulation, line follower |
+| Ajim Tamboli | [@ajim141](https://github.com/ajim141) | _TBD_ |
+| Niyaz Ahammad Shaik | [@Shaik-Niyaz-Ahammad](https://github.com/Shaik-Niyaz-Ahammad) | _TBD_ |
 
 ## Resources
 
