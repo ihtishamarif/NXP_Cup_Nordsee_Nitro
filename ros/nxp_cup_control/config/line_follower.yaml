@@ -1,0 +1,37 @@
+# Line follower parameters. Same names as the dataclasses in lane_tracker.py,
+# so values tuned with tools/fast_sim.py can be copied straight over.
+# Keep the decimal point on float values (2.0, not 2): ROS rejects an int for a float parameter.
+line_follower:
+  ros__parameters:
+    enabled: true
+    publish_debug: true
+    stats_period: 5.0   # seconds (sim time) between camera rate / delay log lines
+
+    camera:             # must match the camera mounting (xacro args / real car)
+      height: 0.25
+      pitch: 0.75
+      hfov: 1.6
+
+    tracker:
+      near_row: 0.50
+      far_row: 0.35
+      band: 3
+      window: 0.10
+      min_contrast: 50
+      width_tolerance: 0.20
+      vignette_comp: 0.0   # lens brightness loss at the image edges; measure on plain white
+      lost_frames: 8
+
+    control:
+      wheel_base: 0.175
+      steering_limit: 0.45
+      kp: 0.7
+      kd: 0.08
+      kf: 0.9
+      v_max: 1.0        # holds even with a slow camera (15 fps, 0.2 s delay); raise to 1.5+
+                        # once the follower's stats line shows ~30 fps and <0.1 s image age
+      v_min: 0.8
+      slow_offset: 0.15
+      hold_time: 0.6
+      v_hold: 0.8
+      accel_limit: 3.5  # keep below the URDF max_acceleration (4.0)
